@@ -1,14 +1,24 @@
 {
   "name": "pidiff",
   "version": "0.1.0",
-  "description": "An interactive /diff viewer for Pi",
+  "description": "A live, resizable split diff viewer for Pi with syntax highlighting and per-turn history",
+  "license": "MIT",
+  "author": "peterlimg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/peterlimg/pidiff.git"
+  },
+  "homepage": "https://github.com/peterlimg/pidiff#readme",
+  "bugs": { "url": "https://github.com/peterlimg/pidiff/issues" },
+  "engines": { "node": ">=22.19.0" },
   "type": "module",
   "keywords": ["pi-package"],
   "files": ["index.ts", "git.ts", "viewer.ts", "panel.ts", "split.ts", "diff.ts", "README.md"],
   "pi": { "extensions": ["./index.ts"] },
   "scripts": {
     "test": "node --experimental-strip-types --test test.ts split.test.ts diff.test.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "prepublishOnly": "npm run check && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

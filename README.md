@@ -4,10 +4,16 @@ A live `/diff` split view for Pi: conversation and prompt on the left, changed f
 
 ## Install
 
-From this directory:
+From npm:
 
 ```sh
-pi install "$PWD"
+pi install npm:pidiff
+```
+
+Or install from GitHub:
+
+```sh
+pi install git:github.com/peterlimg/pidiff
 ```
 
 Run `/reload` in Pi. In `/settings`, change **TUI mode** to **fullscreen**, then run `/diff` from a Git repository. The split needs at least 110 terminal columns.
@@ -19,7 +25,7 @@ cd /path/to/your/repository
 pi --tui-mode fullscreen -e /path/to/pidiff/index.ts
 ```
 
-Requires Git and Pi's interactive terminal UI. Tested with `@earendil-works/pi-coding-agent` 0.85.1. No model call is needed to view diffs.
+Requires Node.js 22.19+, Git, and Pi's interactive terminal UI. Targets `@earendil-works/pi-coding-agent` 0.85.1; older Pi versions are unsupported. No model call is needed to view diffs.
 
 ## Use
 
@@ -85,7 +91,7 @@ Turn history starts when the extension is loaded; it cannot reconstruct earlier 
 
 ## Development
 
-Node 22.18+ is required for the dependency-free TypeScript test runner.
+Use Node.js 22.19+ for Pi and the built-in TypeScript test runner. To install a local checkout, run `pi install "$PWD"` from this directory.
 
 ```sh
 npm install --ignore-scripts
@@ -96,3 +102,7 @@ npm test
 Tests use temporary Git repositories and real Pi TUI components and layout allocation. They cover Git comparisons, unusual filenames, binary and empty files, preview limits, turn recording, hunk numbering, syntax colors and backgrounds in dark/light themes, wrapped gutters, navigation, split sizing, large file lists, divider dragging, scroll isolation, focus preservation, live updates, and cleanup.
 
 Manual smoke test: launch Pi with `--tui-mode fullscreen -e /path/to/pidiff/index.ts` from a changed repository in a wide terminal. Run `/diff`, type a draft without submitting it, and edit a file externally. Confirm the right pane updates while the draft stays in the left prompt. Drag the divider in both directions. Wheel above the first diff line and below the last, and over its header/footer; the chat must not move. Resize below and above 110 columns, then run `/diff` to close it. Check `/diff view` separately for the modal.
+
+## License
+
+[MIT](LICENSE). Report bugs on [GitHub Issues](https://github.com/peterlimg/pidiff/issues).
