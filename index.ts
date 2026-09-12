@@ -82,7 +82,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("diff", {
-    description: "Toggle live split view. /diff [base-ref]; /diff view [base-ref] for the modal and recorded turns.",
+    description: "Toggle unstaged diff. /diff <base-ref> for an explicit comparison; /diff view [base-ref] for the modal and recorded turns.",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         if (ctx.hasUI) ctx.ui.notify("/diff requires Pi's terminal UI.", "warning");

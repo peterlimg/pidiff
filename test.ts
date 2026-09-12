@@ -22,7 +22,41 @@ async function commit(cwd: string) {
   await git(cwd, ["-c", "commit.gpgsign=false", "commit", "-m", "fixture", "--no-verify"]);
 }
 
-test("Current covers staged, unstaged, deleted, binary, untracked and literal paths without changing the index", async () => {
+test("default compares index to working tree, excluding staged-only, untracked and committed changes", async () => {
+  const cwd = await repo();
+  try {
+    await writeFile(join(cwd, "partial"), "head\n");
+    await writeFile(join(cwd, "staged-only"), "head\n");
+    await commit(cwd);
+    await git(cwd, ["switch", "-c", "feature"]);
+    await writeFile(join(cwd, "partial"), "committed\n");
+    await commit(cwd);
+    assert.equal((await currentView(cwd)).files.length, 0, "clean tree must not fall back to branch changes");
+    const explicit = await currentView(cwd, "main");
+    assert.deepEqual(explicit.files.map((file) => file.path), ["partial"]);
+    assert.match(await filePatch(explicit, explicit.files[0]), /-head\n\+committed/);
+
+    await writeFile(join(cwd, "partial"), "staged\n");
+    await writeFile(join(cwd, "staged-only"), "staged\n");
+    await git(cwd, ["add", "partial", "staged-only"]);
+    await writeFile(join(cwd, "untracked"), "not in git diff\n");
+    assert.equal((await currentView(cwd)).files.length, 0, "staged-only and untracked files are not unstaged diffs");
+    // Reverting the working file to HEAD still differs from its staged contents.
+    await writeFile(join(cwd, "partial"), "committed\n");
+    const before = await git(cwd, ["status", "--porcelain=v1", "-z"]);
+    const view = await currentView(cwd);
+    assert.equal(view.label, "Current · unstaged");
+    assert.deepEqual(view.files.map((file) => file.path), ["partial"]);
+    assert.equal(view.files[0].added, 1);
+    assert.equal(view.files[0].removed, 1);
+    const patch = await filePatch(view, view.files[0]);
+    assert.equal(patch, await git(cwd, ["diff", "--", "partial"]));
+    assert.match(patch, /-staged\n\+committed/);
+    assert.equal(await git(cwd, ["status", "--porcelain=v1", "-z"]), before);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("explicit HEAD covers staged, unstaged, deleted, binary, untracked and literal paths without changing the index", async () => {
   const cwd = await repo();
   try {
     for (const path of ["staged", "unstaged", "deleted", ":(glob)*", "line\nbreak\t中"]) await writeFile(join(cwd, path), "old\n");
@@ -40,7 +74,7 @@ test("Current covers staged, unstaged, deleted, binary, untracked and literal pa
     await symlink("does-not-exist", join(cwd, "link"));
     await mkdir(join(cwd, "sub"));
     const before = await git(cwd, ["status", "--porcelain=v1", "-z"]);
-    const view = await currentView(join(cwd, "sub"));
+    const view = await currentView(join(cwd, "sub"), "HEAD");
     assert.equal(view.files.length, 9);
     for (const path of ["staged", "unstaged", ":(glob)*", "line\nbreak\t中"]) {
       const file = view.files.find((file) => file.path === path)!;
@@ -59,7 +93,7 @@ test("Current covers staged, unstaged, deleted, binary, untracked and literal pa
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
-test("unborn HEAD, branch fallback, explicit base, and non-repository errors", async () => {
+test("unborn HEAD, no branch fallback, explicit base, and non-repository errors", async () => {
   const cwd = await repo();
   const outside = await mkdtemp(join(tmpdir(), "pidiff-outside-"));
   try {
@@ -68,17 +102,17 @@ test("unborn HEAD, branch fallback, explicit base, and non-repository errors", a
     await writeFile(join(cwd, "new"), "actual\n");
     const initial = await currentView(cwd);
     assert.equal(initial.files.length, 1);
-    assert.match(await filePatch(initial, initial.files[0]), /\+actual/);
+    assert.match(await filePatch(initial, initial.files[0]), /-staged\n\+actual/);
     await commit(cwd);
     assert.equal((await currentView(cwd)).files.length, 0);
     await git(cwd, ["switch", "-c", "feature"]);
     await writeFile(join(cwd, "new"), "branch\n");
     await commit(cwd);
     const branch = await currentView(cwd);
-    assert.match(branch.label, /since main/);
-    assert.equal(branch.files.length, 1);
+    assert.equal(branch.label, "Current · unstaged");
+    assert.equal(branch.files.length, 0);
     await writeFile(join(cwd, "new"), "uncommitted\n");
-    assert.match((await currentView(cwd)).label, /uncommitted/);
+    assert.equal((await currentView(cwd)).label, "Current · unstaged");
     const explicit = await currentView(cwd, "main");
     assert.match(await filePatch(explicit, explicit.files[0]), /-actual/);
     await assert.rejects(currentView(cwd, "--output=oops"), /Cannot resolve base/);
@@ -102,9 +136,10 @@ test("snapshot diffs, bounded previews and terminal-safe text", async () => {
     assert.equal((await diffBuffers("binary", null, Buffer.from([0, 1]))).binary, true);
     assert.deepEqual(parseNumstat("1\t2\todd\tname\n中\0")[0].path, "odd\tname\n中");
     assert.equal(safeText("\x1b[2J\r\n\t中"), "\\x1b[2J\\x0d\\x0a    中");
+    await git(cwd, ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "baseline", "--no-verify"]);
     await writeFile(join(cwd, "large"), Buffer.alloc(2 * 1024 * 1024 + 1));
     await assert.rejects(snapshot(join(cwd, "large")), /2 MiB/);
-    const view = await currentView(cwd);
+    const view = await currentView(cwd, "HEAD");
     assert.match(view.files[0].patch!, /Preview unavailable/);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });

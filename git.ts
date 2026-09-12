@@ -114,25 +114,18 @@ async function resolveRef(root: string, ref: string, signal?: AbortSignal): Prom
 export async function currentView(cwd: string, base?: string, signal?: AbortSignal): Promise<View> {
   const root = (await git(cwd, ["rev-parse", "--show-toplevel"], false, signal)).replace(/\r?\n$/, "");
   const run = (args: string[]) => git(root, args, false, signal);
-  const head = await resolveRef(root, "HEAD", signal);
-  let ref = head ?? (await run(["hash-object", "-t", "tree", "--stdin"])).trim();
-  let label = "Current · uncommitted";
-  const dirty = await run(["status", "--porcelain=v1", "-z", "--untracked-files=normal"]);
-  if (base || (!dirty && head)) {
-    let candidates = base ? [base] : ["refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"];
-    if (!base) candidates = [candidates[0], "refs/remotes/origin/main", "refs/remotes/origin/master", ...candidates.slice(1)];
-    for (const candidate of candidates) {
-      const commit = await resolveRef(root, candidate, signal);
-      if (!commit) continue;
-      ref = (await run(["merge-base", "HEAD", commit])).trim();
-      label = `Current · since ${candidate.replace(/^refs\/(heads|remotes)\//, "")}`;
-      break;
-    }
-    if (base && label === "Current · uncommitted") throw new Error(`Cannot resolve base: ${base}`);
+  let ref: string | undefined;
+  let label = "Current · unstaged";
+  if (base) {
+    const commit = await resolveRef(root, base, signal);
+    if (!commit) throw new Error(`Cannot resolve base: ${base}`);
+    ref = (await run(["merge-base", "HEAD", commit])).trim();
+    label = `Current · since ${base.replace(/^refs\/(heads|remotes)\//, "")}`;
   }
-  const files = parseNumstat(await run(["diff", ...DIFF_OPTIONS, "--numstat", "-z", ref, "--"]));
+  // No ref means index → working tree, just like plain git diff.
+  const files = parseNumstat(await run(["diff", ...DIFF_OPTIONS, "--numstat", "-z", ...(ref ? [ref] : []), "--"]));
   const known = new Set(files.map((file) => file.path));
-  const untracked = (await run(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+  const untracked = (base ? await run(["ls-files", "--others", "--exclude-standard", "-z"]) : "").split("\0").filter(Boolean);
   for (const path of untracked) {
     signal?.throwIfAborted();
     if (known.has(path)) continue;
@@ -147,13 +140,13 @@ export async function currentView(cwd: string, base?: string, signal?: AbortSign
       files.push({ path, added: 0, removed: 0, untracked: true, patch: `Preview unavailable: ${(error as Error).message}` });
     }
   }
-  return { label, files, root, ref, note: files.length ? undefined : "No net changes to display." };
+  return { label, files, root, ref, note: files.length ? undefined : base ? "No changes since the specified base." : "No unstaged changes." };
 }
 
 export async function filePatch(view: View, file: Change, signal?: AbortSignal): Promise<string> {
   if (file.patch !== undefined) return file.patch || "No net changes.";
   if (file.untracked) return (await diffBuffers(file.path, null, await snapshot(join(view.root!, file.path)), signal)).patch || "File no longer exists. Press r to refresh.";
-  return await git(view.root!, ["diff", ...DIFF_OPTIONS, view.ref!, "--", file.path], false, signal) || "No net changes. Press r to refresh.";
+  return await git(view.root!, ["diff", ...DIFF_OPTIONS, ...(view.ref ? [view.ref] : []), "--", file.path], false, signal) || "No net changes. Press r to refresh.";
 }
 
 // Repository text is not terminal markup. Escape control characters before rendering.

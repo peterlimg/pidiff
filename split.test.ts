@@ -75,6 +75,7 @@ test("wheel input anywhere in the diff pane never scrolls the chat", async () =>
       }
     }
     await writeFile(join(cwd, "long.txt"), Array.from({ length: 100 }, (_, i) => `diff ${i}`).join("\n"));
+    await git(cwd, ["add", "-N", "--", "long.txt"]);
     await panel.refresh();
     tui.renderNow();
     const diffScroll = panel.component.children.filter((child) => child instanceof ScrollView).at(-1)!;
@@ -110,6 +111,7 @@ test("many files never push the selected patch out of view", async () => {
   try {
     await git(cwd, ["init", "-b", "main"]);
     await Promise.all(Array.from({ length: 48 }, (_, i) => writeFile(join(cwd, `${String(i).padStart(2, "0")}.txt`), Array.from({ length: 80 }, (_, line) => `code-${i}-${line}`).join("\n"))));
+    await git(cwd, ["add", "-N", "--", "."]);
     panel = openPanel(tui, theme, cwd, undefined, () => panel?.dispose());
     await panel.refresh();
     tui.start();
@@ -260,6 +262,7 @@ test("live panel reloads patches without taking focus and disposes in-flight wor
   try {
     await git(cwd, ["init", "-b", "main"]);
     await writeFile(join(cwd, "file.txt"), "first version\n");
+    await git(cwd, ["add", "-N", "--", "file.txt"]);
     panel = openPanel(tui, theme, cwd, undefined, () => panel?.dispose());
     await panel.refresh();
     const render = () => renderLayoutFrame(Reflect.get(tui, "layoutRoot"), 140, 30, () => {}).lines.join("\n");

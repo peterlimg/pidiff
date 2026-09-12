@@ -30,9 +30,10 @@ Requires Node.js 22.19+, Git, and Pi's interactive terminal UI. Targets `@earend
 ## Use
 
 ```text
-/diff            Open or close the live split pane
-/diff main       Open the split comparing against the merge-base with main
-/diff view       Open the modal viewer, including recorded turns
+/diff            Open or close the split showing unstaged changes
+/diff main       Compare against the merge-base with main
+/diff HEAD       Show net uncommitted changes, including untracked files
+/diff view       Open unstaged changes and recorded turns in the modal
 /diff view main  Open the modal comparing against main
 ```
 
@@ -69,11 +70,11 @@ Both viewers show syntax-colored code, line numbers and a `+`/`-` gutter. Added 
 
 ### Current
 
-Shows net changes between HEAD and files on disk, including staged and unstaged changes, deletions, and non-ignored untracked files. It includes other people's edits, not just Pi's. Staged changes canceled out by unstaged changes have no net diff. Renames appear as a deletion and an addition.
+By default, shows tracked, unstaged changes between the index and working tree, like `git diff`. Staged-only changes, untracked files, and committed changes are excluded. A clean working tree shows "No unstaged changes", even if the branch is ahead of its remote. Partially staged files show only the differences from their staged contents. Files marked with `git add -N` appear just as they do in `git diff`.
 
-When the working tree and index are clean, it compares against the merge-base with the first available default-branch candidate: `origin/HEAD`, `origin/main`, `origin/master`, local `main`, then local `master`. Use `/diff <base-ref>` for another branch. It never fetches from a remote.
+Comparisons against a branch or commit require `/diff <base-ref>`. This compares the working tree against the merge-base of HEAD and the specified ref, and also includes non-ignored untracked files. Use `/diff HEAD` for net staged and unstaged changes plus untracked files. It never selects a base automatically or fetches from a remote.
 
-Works from repository subdirectories and before the first commit. Binary files show a binary-change notice. Symlinks show their link targets, not the contents of the linked files.
+Both modes include other people's local edits, not just Pi's. Renames are not inferred. The default works from repository subdirectories and before the first commit. Binary files show a binary-change notice. Symlinks show their link targets, not the contents of the linked files.
 
 ### Turns
 
