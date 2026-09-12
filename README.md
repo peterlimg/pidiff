@@ -44,8 +44,8 @@ The conversation reflows into the left column. The pane does not cover the chat 
 - The diff starts at 60% of the terminal width, without a maximum-column cap. Drag the vertical `│` divider to resize it. The selected width stays in columns while the pane is open, shrinking as needed to leave at least 40 columns for chat and 44 for the diff.
 - `Ctrl+Alt+Shift+Left/Right` widens or narrows the diff by four columns without a mouse.
 - The file list shows at most six rows and scrolls separately from the code. Filenames sit beside right-aligned addition/deletion counts. Click a filename to show its diff immediately below the list, with the selected path fixed above the code.
-- Wheel over the file list to browse files, or over the code to scroll the patch. Neither scroll area spills into the other or into chat at its boundaries. Wheel over the header/footer scrolls only the code.
-- `Ctrl+Alt+Up/Down` scrolls the code; `Ctrl+Alt+Left/Right` selects the previous or next file and brings its filename into view. Normal editing and transcript keys stay with Pi.
+- Wheel over the file list to browse filenames without changing the selected file. Over the code, scrolling past the bottom opens the next file at its top; scrolling past the top opens the previous file at its bottom. The selected filename stays visible in the list. Scrolling stops at the first and last files, never wraps or scrolls chat. Wheel over the header/footer behaves like scrolling over the code.
+- `Ctrl+Alt+Up/Down` uses the same scrolling and file-boundary navigation; `Ctrl+Alt+Left/Right` selects a file directly. Normal editing and transcript keys stay with Pi.
 - Click `×` or run `/diff` again to close the pane and restore the full-width conversation.
 - Below 110 columns, the pane hides and the conversation gets the full width. Widen the terminal to reveal it again.
 - `/reload`, session changes, and exit close the pane and stop its background work.
@@ -100,9 +100,9 @@ npm run check
 npm test
 ```
 
-Tests use temporary Git repositories and real Pi TUI components and layout allocation. They cover Git comparisons, unusual filenames, binary and empty files, preview limits, turn recording, hunk numbering, syntax colors and backgrounds in dark/light themes, wrapped gutters, navigation, split sizing, large file lists, divider dragging, scroll isolation, focus preservation, live updates, and cleanup.
+Tests use temporary Git repositories and real Pi TUI components and layout allocation. They cover Git comparisons, unusual filenames, binary and empty files, preview limits, turn recording, hunk numbering, syntax colors and backgrounds in dark/light themes, wrapped gutters, navigation, split sizing, large file lists, divider dragging, cross-file scrolling in both directions, scroll isolation, focus preservation, live updates, and cleanup.
 
-Manual smoke test: launch Pi with `--tui-mode fullscreen -e /path/to/pidiff/index.ts` from a changed repository in a wide terminal. Run `/diff`, type a draft without submitting it, and edit a file externally. Confirm the right pane updates while the draft stays in the left prompt. Drag the divider in both directions. Wheel above the first diff line and below the last, and over its header/footer; the chat must not move. Resize below and above 110 columns, then run `/diff` to close it. Check `/diff view` separately for the modal.
+Manual smoke test: launch Pi with `--tui-mode fullscreen -e /path/to/pidiff/index.ts` from a changed repository in a wide terminal. Run `/diff`, type a draft without submitting it, and edit a file externally. Confirm the right pane updates while the draft stays in the left prompt. Drag the divider in both directions. Scroll past the code's bottom to open the next file at its top, then past its top to return to the previous file's bottom. Try a one-line diff too. The first and last files must not wrap. Wheel over the header/footer; the chat must not move. Resize below and above 110 columns, then run `/diff` to close it. Check `/diff view` separately for the modal.
 
 ## License
 

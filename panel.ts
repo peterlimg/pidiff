@@ -14,18 +14,32 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
   let running: Promise<void> | undefined;
   let again = false;
   let cached: { width: number; lines: string[] } | undefined;
+  let loading = true;
+  let landing: "start" | "end" | undefined = "start";
   const controller = new AbortController();
 
   function invalidate() { cached = undefined; }
-  function select(path: string) {
+  function select(path: string, edge: "start" | "end" = "start") {
     if (selected === path) return;
     selected = path;
+    loading = true;
+    landing = edge;
     patch = "Loading diff...";
     invalidate();
     scroll.scrollToStart();
     revealSelection();
     tui.requestRender();
     void refresh();
+  }
+
+  function scrollCode(delta: number) {
+    if (loading || landing || !selected || !delta) return;
+    const top = scroll.scrollTop;
+    scroll.scrollBy(delta);
+    if (scroll.scrollTop !== top) return;
+    const index = view.files.findIndex((file) => file.path === selected);
+    const file = view.files[index + Math.sign(delta)];
+    if (file) select(file.path, delta < 0 ? "end" : "start");
   }
 
   function revealSelection() {
@@ -66,7 +80,17 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       return cached.lines;
     },
   };
-  const scroll = new ScrollView(body, { primary: false, overscroll: "contain", scrollbar: "auto" });
+  const scroll = new class extends ScrollView {
+    override updateLayout(...args: Parameters<ScrollView["updateLayout"]>) {
+      super.updateLayout(...args);
+      // Land only after the new patch has loaded and its height is known.
+      if (!loading && landing) {
+        if (landing === "end") this.scrollToEnd();
+        else this.scrollToStart();
+        landing = undefined;
+      }
+    }
+  }(body, { primary: false, overscroll: "contain", scrollbar: "auto" });
   const header: Component = {
     invalidate,
     render(width) {
@@ -95,16 +119,17 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
   const pane: Component = component;
   pane.handleMouse = (event) => {
     if (event.type !== "wheel") return;
-    const target = event.y >= 2 && event.y < 2 + fileScroll.viewportHeight ? fileScroll : scroll;
-    target.scrollBy(event.wheelDelta ?? 0);
+    const delta = event.wheelDelta ?? 0;
+    if (event.y >= 2 && event.y < 2 + fileScroll.viewportHeight) fileScroll.scrollBy(delta);
+    else scrollCode(delta);
     return { handled: true };
   };
   const unmount = mountSplit(tui, component);
   const mountedRoot = Reflect.get(tui, "layoutRoot");
   const removeInput = tui.addInputListener((data) => {
     if (closed || tui.terminal.columns < 110 || tui.hasOverlay()) return;
-    if (matchesKey(data, "ctrl+alt+up")) scroll.scrollBy(-3);
-    else if (matchesKey(data, "ctrl+alt+down")) scroll.scrollBy(3);
+    if (matchesKey(data, "ctrl+alt+up")) scrollCode(-3);
+    else if (matchesKey(data, "ctrl+alt+down")) scrollCode(3);
     else if (matchesKey(data, "ctrl+alt+left") || matchesKey(data, "ctrl+alt+right")) {
       const direction = matchesKey(data, "ctrl+alt+left") ? -1 : 1;
       const index = view.files.findIndex((file) => file.path === selected);
@@ -122,6 +147,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       const file = next.files.find((file) => file.path === selected) ?? next.files[0];
       const path = file?.path;
       const changed = selected !== path;
+      if (changed) { loading = true; landing = "start"; }
       selected = path;
       const fullPatch = file ? await filePatch(next, file, controller.signal) : "";
       if (closed) return;
@@ -130,6 +156,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       if (changed) { scroll.scrollToStart(); revealSelection(); }
       patch = fullPatch.length > 200_000 ? fullPatch.slice(0, 200_000) + "\n[Preview truncated at 200,000 characters. Use git diff for the full patch.]" : fullPatch;
       error = "";
+      loading = false;
     } catch (cause) {
       if (closed) return;
       error = `Refresh failed: ${(cause as Error).message}`;

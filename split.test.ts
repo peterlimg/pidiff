@@ -141,16 +141,13 @@ test("many files never push the selected patch out of view", async () => {
     tui.renderNow();
     assert.equal(fileScroll.scrollTop, listTop, "polling must not pull the list back to the selected file");
     for (const boundary of ["top", "bottom"]) {
-      for (const scroll of [fileScroll, codeScroll]) {
-        if (boundary === "top") scroll.scrollToStart();
-        else scroll.scrollToEnd();
-        tui.renderNow();
-        const other = scroll === fileScroll ? codeScroll : fileScroll;
-        const otherTop = other.scrollTop;
-        wheel(scroll, boundary === "top" ? 64 : 65);
-        assert.equal(other.scrollTop, otherTop, "boundary wheel leaked into the other pane");
-        assert.equal(transcript.scrollTop, 30);
-      }
+      if (boundary === "top") fileScroll.scrollToStart();
+      else fileScroll.scrollToEnd();
+      tui.renderNow();
+      const codeTop = codeScroll.scrollTop;
+      wheel(fileScroll, boundary === "top" ? 64 : 65);
+      assert.equal(codeScroll.scrollTop, codeTop, "file-list wheel leaked into the code");
+      assert.equal(transcript.scrollTop, 30);
     }
     // Click the first visible row after scrolling the list, not file zero.
     const index = fileScroll.scrollTop;
@@ -177,6 +174,89 @@ test("many files never push the selected patch out of view", async () => {
       assert.ok(codeScroll.viewportHeight > 0);
       assert.match(frame().lines.join("\n"), new RegExp(`code-${index + 1}-0`));
     }
+  } finally {
+    panel?.dispose();
+    tui.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("scrolling past code boundaries selects adjacent files without skipping, wrapping or scrolling chat", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pidiff-file-scroll-"));
+  const harness = terminalHarness();
+  const tui = new TuiAltScreen(harness.terminal);
+  const prompt = new Text("draft", 0, 0);
+  const transcript = new ScrollView(new Text(Array.from({ length: 100 }, (_, i) => `chat ${i}`).join("\n"), 0, 0), { primary: true });
+  tui.setLayoutRoot(new VStack([{ component: transcript, basis: 0, grow: 1 }, prompt]));
+  tui.setFocus(prompt);
+  const theme = { fg: (_: string, text: string) => text, bg: (_: string, text: string) => text, bold: (text: string) => text } as Theme;
+  let panel: ReturnType<typeof openPanel> | undefined;
+  try {
+    await git(cwd, ["init", "-b", "main"]);
+    for (const [name, count] of [["00", 80], ["01", 1], ["02", 120]] as const) {
+      await writeFile(join(cwd, `${name}.txt`), Array.from({ length: count }, (_, i) => `file${name}-line${i}`).join("\n"));
+    }
+    await git(cwd, ["add", "-N", "--", "."]);
+    panel = openPanel(tui, theme, cwd, undefined, () => panel?.dispose());
+    await panel.refresh();
+    tui.start();
+    tui.renderNow();
+    transcript.scrollTo(30);
+    tui.renderNow();
+    const codeScroll = panel.component.children.filter((child) => child instanceof ScrollView).at(-1)!;
+    const frame = () => renderLayoutFrame(Reflect.get(tui, "layoutRoot"), 160, 30, () => {});
+    function wheel(button: number) {
+      const { x, y } = frame().root.children.at(-1)!.children.find((child) => child.component === codeScroll)!.rect;
+      harness.input(`\x1b[<${button};${x + 3};${y + 1}M`);
+      tui.renderNow();
+    }
+    function selected(name: string, line: number) {
+      const text = frame().lines.join("\n");
+      assert.match(text, new RegExp(`› ${name}\\.txt`));
+      assert.match(text, new RegExp(`file${name}-line${line}(?![0-9])`));
+      assert.equal(transcript.scrollTop, 30, "file navigation scrolled chat");
+      assert.equal(tui.getFocusedComponent(), prompt);
+      assert.match(text, /draft/);
+    }
+    wheel(64); // First file's top does not wrap.
+    await panel.refresh();
+    selected("00", 0);
+    wheel(65);
+    assert.ok(codeScroll.scrollTop > 0, "scroll within a file before changing selection");
+    codeScroll.scrollToEnd();
+    codeScroll.scrollBy(-1);
+    tui.renderNow();
+    wheel(65);
+    selected("00", 79); // Reaching the edge must not skip the last visible lines.
+    wheel(65);
+    wheel(65); // Extra input during loading must not skip the short middle file.
+    await panel.refresh();
+    selected("01", 0);
+    assert.equal(codeScroll.scrollTop, 0);
+    wheel(65); // A file shorter than the viewport still advances.
+    await panel.refresh();
+    selected("02", 0);
+    assert.equal(codeScroll.scrollTop, 0);
+    codeScroll.scrollToEnd();
+    tui.renderNow();
+    wheel(65); // Last file's bottom does not wrap.
+    await panel.refresh();
+    selected("02", 119);
+    codeScroll.scrollToStart();
+    tui.renderNow();
+    harness.input("\x1b[1;7A"); // Ctrl+Alt+Up uses the same boundary navigation.
+    await panel.refresh();
+    selected("01", 0);
+    wheel(64);
+    await panel.refresh();
+    selected("00", 79); // Land after layout measures the newly loaded, longer patch.
+    const bottom = codeScroll.scrollTop;
+    assert.ok(bottom > 0);
+    harness.input("\x1b[1;7A");
+    assert.equal(codeScroll.scrollTop, bottom - 3);
+    await panel.refresh();
+    assert.equal(codeScroll.scrollTop, bottom - 3, "polling must not pin the previous file to its bottom");
+    selected("00", 76);
   } finally {
     panel?.dispose();
     tui.stop();
