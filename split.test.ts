@@ -364,3 +364,31 @@ test("live panel reloads patches without taking focus and disposes in-flight wor
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("panel clears the previous patch when automatic replacement fails", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pidiff-panel-failure-"));
+  const tui = new TuiAltScreen(terminalHarness().terminal);
+  tui.setLayoutRoot(new VStack([new Text("chat", 0, 0)]));
+  const theme = { fg: (_: string, text: string) => text, bg: (_: string, text: string) => text, bold: (text: string) => text } as Theme;
+  let panel: ReturnType<typeof openPanel> | undefined;
+  const render = () => renderLayoutFrame(Reflect.get(tui, "layoutRoot"), 160, 30, () => {}).lines.join("\n");
+  try {
+    await git(cwd, ["init", "-b", "main"]);
+    for (const path of ["a.txt", "b.txt"]) await writeFile(join(cwd, path), "before\n");
+    await git(cwd, ["add", "-A"]);
+    await writeFile(join(cwd, "a.txt"), "UNIQUE_A_CONTENT\n");
+    await writeFile(join(cwd, "b.txt"), "b".repeat(9 * 1024 * 1024) + "\n");
+    panel = openPanel(tui, theme, cwd, undefined, () => panel?.dispose());
+    await panel.refresh();
+    assert.match(render(), /UNIQUE_A_CONTENT/);
+    await writeFile(join(cwd, "a.txt"), "before\n");
+    await panel.refresh();
+    assert.match(render(), /b\.txt/);
+    assert.match(render(), /Refresh failed/);
+    assert.doesNotMatch(render(), /UNIQUE_A_CONTENT/);
+    await writeFile(join(cwd, "b.txt"), "recovered\n");
+    await panel.refresh();
+    assert.match(render(), /recovered/);
+    assert.doesNotMatch(render(), /Refresh failed/);
+  } finally { panel?.dispose(); await rm(cwd, { recursive: true, force: true }); }
+});

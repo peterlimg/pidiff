@@ -16,6 +16,7 @@ export class DiffViewer {
   private loading = false;
   private closed = false;
   private request = 0;
+  private controller?: AbortController;
   private wrapped?: { width: number; patch: string; path: string; lines: string[] };
 
   private tui: TUI;
@@ -23,9 +24,9 @@ export class DiffViewer {
   private kb: Pick<KeybindingsManager, "matches">;
   private done: () => void;
   private views: View[];
-  private refresh: () => Promise<View>;
+  private refresh: (signal?: AbortSignal) => Promise<View>;
 
-  constructor(tui: TUI, theme: Theme, kb: Pick<KeybindingsManager, "matches">, done: () => void, views: View[], refresh: () => Promise<View>) {
+  constructor(tui: TUI, theme: Theme, kb: Pick<KeybindingsManager, "matches">, done: () => void, views: View[], refresh: (signal?: AbortSignal) => Promise<View>) {
     this.tui = tui;
     this.theme = theme;
     this.kb = kb;
@@ -36,46 +37,60 @@ export class DiffViewer {
 
   private async openFile() {
     const file = this.views[this.tab].files[this.selected];
-    if (!file) return;
+    if (!file || this.closed) return;
+    this.cancelWork();
+    this.controller = new AbortController();
     this.opened = true;
     this.scroll = 0;
     this.patch = "Loading diff...";
     const request = ++this.request;
     try {
-      const patch = await filePatch(this.views[this.tab], file);
+      const patch = await filePatch(this.views[this.tab], file, this.controller.signal);
       if (request === this.request && !this.closed) {
         this.patch = patch.length > 200_000 ? patch.slice(0, 200_000) + "\n[Preview truncated at 200,000 characters. Use git diff for the full patch.]" : patch;
       }
     } catch (error) {
       if (request === this.request && !this.closed) this.patch = `Preview unavailable: ${(error as Error).message}`;
     }
-    if (!this.closed) this.tui.requestRender();
+    if (request === this.request && !this.closed) this.tui.requestRender();
   }
 
   private async reload() {
-    if (this.loading) return;
+    if (this.closed) return;
+    this.cancelWork();
+    this.controller = new AbortController();
     this.loading = true;
-    this.request++;
+    const request = ++this.request;
     try {
-      const current = await this.refresh();
-      if (this.closed) return;
+      const current = await this.refresh(this.controller.signal);
+      if (request !== this.request || this.closed) return;
       this.views[0] = current;
       this.tab = 0;
       this.reset();
+      this.tui.requestRender();
     } catch (error) {
-      if (!this.closed) {
+      if (request === this.request && !this.closed) {
         this.opened = true;
         this.scroll = 0;
         this.patch = `Refresh failed: ${(error as Error).message}`;
       }
     } finally {
-      this.loading = false;
-      if (!this.closed) this.tui.requestRender();
+      if (request === this.request && !this.closed) {
+        this.loading = false;
+        this.tui.requestRender();
+      }
     }
   }
 
-  private reset() {
+  private cancelWork() {
     this.request++;
+    this.controller?.abort();
+    this.controller = undefined;
+    this.loading = false;
+  }
+
+  private reset() {
+    this.cancelWork();
     this.selected = 0;
     this.opened = false;
     this.list = undefined;
@@ -83,9 +98,10 @@ export class DiffViewer {
   }
 
   handleInput(data: string) {
+    if (this.closed) return;
     if (this.kb.matches(data, "tui.select.cancel") || data === "q") {
-      if (this.opened) { this.opened = false; this.request++; }
-      else { this.closed = true; this.done(); return; }
+      if (this.opened) { this.opened = false; this.cancelWork(); }
+      else { this.dispose(); this.done(); return; }
     } else if (matchesKey(data, "left") || matchesKey(data, "right")) {
       this.tab = (this.tab + (matchesKey(data, "left") ? -1 : 1) + this.views.length) % this.views.length;
       this.reset();
@@ -99,6 +115,10 @@ export class DiffViewer {
       if (matchesKey(data, "home")) this.scroll = 0;
       if (matchesKey(data, "end")) this.scroll = this.lineCount;
       this.scroll = Math.max(0, Math.min(this.scroll, this.lineCount - this.page));
+    } else if (this.kb.matches(data, "tui.select.pageUp") || this.kb.matches(data, "tui.select.pageDown")) {
+      const direction = this.kb.matches(data, "tui.select.pageUp") ? -1 : 1;
+      this.selected = Math.max(0, Math.min(this.views[this.tab].files.length - 1, this.selected + direction * Math.max(1, this.listHeight)));
+      this.list?.setSelectedIndex(this.selected);
     } else if (this.kb.matches(data, "tui.select.confirm")) {
       void this.openFile();
     } else {
@@ -160,5 +180,5 @@ export class DiffViewer {
   }
 
   invalidate() { this.wrapped = undefined; this.list?.invalidate(); }
-  dispose() { this.closed = true; this.request++; }
+  dispose() { this.closed = true; this.cancelWork(); }
 }

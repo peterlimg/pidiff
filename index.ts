@@ -1,12 +1,25 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
-import { resolve, relative } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { currentView, diffBuffers, safeText, snapshot, type Change, type View } from "./git.ts";
 import { DiffViewer } from "./viewer.ts";
 import { openPanel } from "./panel.ts";
 
 const ENTRY = "pidiff.turn.v1";
+
+// Pi 0.85.1's normalizePath/resolveToCwd are not public exports.
+function normalizePath(path: string, toolInput = false): string {
+  if (toolInput) path = path.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "");
+  if (process.platform === "win32" && !path.includes("\\")) {
+    path = path.replace(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i,
+      (_match, drive: string, suffix = "") => `${drive.toUpperCase()}:\\${suffix.replaceAll("/", "\\")}`);
+  }
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || (process.platform === "win32" && path.startsWith("~\\"))) return join(homedir(), path.slice(2));
+  return path.startsWith("file://") ? fileURLToPath(path) : path;
+}
 
 export default function (pi: ExtensionAPI) {
   let panel: ReturnType<typeof openPanel> | undefined;
@@ -35,13 +48,13 @@ export default function (pi: ExtensionAPI) {
     if (event.toolName !== "edit" && event.toolName !== "write") return;
     const input = event.input as { path?: unknown };
     if (typeof input.path !== "string") return;
-    let path = input.path.replace(/^@/, "");
-    if (path.startsWith("~/")) path = resolve(homedir(), path.slice(2));
-    path = resolve(ctx.cwd, path);
+    let path: string;
+    try { path = resolve(normalizePath(ctx.cwd), normalizePath(input.path, true)); }
+    catch { return; } // Invalid file URLs also fail in the built-in tool; never block it here.
     if (!files.has(path)) {
       // ponytail: at most 25 files per turn; use on-disk snapshots if larger turns need history.
       if (files.size >= 25) { omitted = true; return; }
-      try { files.set(path, { before: await snapshot(path) }); }
+      try { files.set(path, { before: await snapshot(path, true) }); }
       catch (error) { files.set(path, { error: (error as Error).message }); }
     }
     pending.set(event.toolCallId, path);
@@ -53,7 +66,7 @@ export default function (pi: ExtensionAPI) {
     if (!path || event.isError) return;
     const state = files.get(path)!;
     state.changed = true;
-    try { state.after = await snapshot(path); }
+    try { state.after = await snapshot(path, true); }
     catch (error) { state.error = (error as Error).message; }
   });
 
@@ -115,15 +128,20 @@ export default function (pi: ExtensionAPI) {
       const load = (signal?: AbortSignal) => currentView(ctx.cwd, base, signal);
       const current = await ctx.ui.custom<View | undefined>((tui, theme, _kb, done) => {
         const loader = new BorderedLoader(tui, theme, "Loading changes...");
-        let cancelled = false;
-        loader.onAbort = () => { cancelled = true; done(undefined); };
-        load(loader.signal).then((view) => { if (!cancelled) done(view); }).catch((error) => {
-          if (!cancelled) {
+        const controller = new AbortController();
+        loader.onAbort = () => { controller.abort(); done(undefined); };
+        load(controller.signal).then((view) => { if (!controller.signal.aborted) done(view); }).catch((error) => {
+          if (!controller.signal.aborted) {
             ctx.ui.notify(safeText((error as Error).message), "error");
             done(undefined);
           }
         });
-        return loader;
+        return {
+          render: (width) => loader.render(width),
+          invalidate: () => loader.invalidate(),
+          handleInput: (data) => loader.handleInput(data),
+          dispose() { controller.abort(); loader.dispose(); },
+        };
       });
       if (!current) return;
       const turns = ctx.sessionManager.getBranch().flatMap((entry) =>

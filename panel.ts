@@ -147,7 +147,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       const file = next.files.find((file) => file.path === selected) ?? next.files[0];
       const path = file?.path;
       const changed = selected !== path;
-      if (changed) { loading = true; landing = "start"; }
+      if (changed) { loading = true; landing = "start"; patch = ""; invalidate(); }
       selected = path;
       const fullPatch = file ? await filePatch(next, file, controller.signal) : "";
       if (closed) return;

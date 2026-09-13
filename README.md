@@ -64,7 +64,7 @@ Regular TUI mode cannot host this split. `/diff` explains how to switch rather t
 | r | Reload Current from disk |
 | Esc, Ctrl+C, q | Return to the list, then close |
 
-Pi's configured selection keys also work.
+Pi's configured selection keys also work. Closing, going back, switching tabs, or replacing a load cancels pending modal work.
 
 Both viewers show syntax-colored code, line numbers and a `+`/`-` gutter. Added and removed lines use the active theme's success/error backgrounds, including wrapped continuations. Deleted lines carry their old line numbers; additions and context carry their new numbers. Git's `diff`, `index`, and filename headers are hidden, with `···` between hunks. Binary, file-mode, missing-newline and preview-limit notices remain visible. Syntax highlighting uses each side of each hunk separately, so it cannot recover syntax state from omitted source lines.
 
@@ -74,11 +74,11 @@ By default, shows tracked, unstaged changes between the index and working tree, 
 
 Comparisons against a branch or commit require `/diff <base-ref>`. This compares the working tree against the merge-base of HEAD and the specified ref, and also includes non-ignored untracked files. Use `/diff HEAD` for net staged and unstaged changes plus untracked files. It never selects a base automatically or fetches from a remote.
 
-Both modes include other people's local edits, not just Pi's. Renames are not inferred. The default works from repository subdirectories and before the first commit. Binary files show a binary-change notice. Symlinks show their link targets, not the contents of the linked files.
+Both modes include other people's local edits, not just Pi's. Renames are not inferred. The default works from repository subdirectories and before the first commit. Binary files show a binary-change notice. Unmerged paths appear once with an unsupported-conflict preview notice; resolve them with Git before previewing. Symlinks show their link targets, not the contents of the linked files.
 
 ### Turns
 
-While installed, pidiff records before/after snapshots for successful local `edit` and `write` tool calls. It combines repeated edits to a file into one net diff per agent run. These diffs persist as custom session entries and follow the active `/tree` branch when reloaded or resumed. They are not sent to the model.
+While installed, pidiff records before/after snapshots for successful local `edit` and `write` tool calls. Snapshot paths follow Pi's tool normalization, including Unicode spaces and file URLs. Unlike Current, turn snapshots follow symlinks to record the linked file's contents. It combines repeated edits to a file into one net diff per agent run. These diffs persist as custom session entries and follow the active `/tree` branch when reloaded or resumed. They are not sent to the model.
 
 Turn history starts when the extension is loaded; it cannot reconstruct earlier edits. Shell commands and other tools are visible through Current, not separately tracked in turn history. Concurrent external edits to the same file can also enter a snapshot. This is a review aid, not an attribution audit or backup.
 

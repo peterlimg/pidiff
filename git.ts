@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, open, readlink, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { stat, lstat, open, readlink, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -37,13 +37,13 @@ export function git(cwd: string, args: string[], allowDifference = false, signal
   });
 }
 
-// Read symlink contents, never the file they point at. Bound reads even if the file grows.
-export async function snapshot(path: string): Promise<Buffer | null> {
+// Current reads link text; turn snapshots follow links like edit/write. Bound growing files too.
+export async function snapshot(path: string, followSymlinks = false): Promise<Buffer | null> {
   try {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink()) return Buffer.from(await readlink(path));
-    if (!stat.isFile()) throw new Error("Not a regular file");
-    if (stat.size > MAX_BYTES) throw new Error("File exceeds the 2 MiB preview limit");
+    const info = await (followSymlinks ? stat(path) : lstat(path));
+    if (info.isSymbolicLink()) return Buffer.from(await readlink(path));
+    if (!info.isFile()) throw new Error("Not a regular file");
+    if (info.size > MAX_BYTES) throw new Error("File exceeds the 2 MiB preview limit");
     const file = await open(path, "r");
     try {
       const buffer = Buffer.alloc(MAX_BYTES + 1);
@@ -123,8 +123,14 @@ export async function currentView(cwd: string, base?: string, signal?: AbortSign
     label = `Current · since ${base.replace(/^refs\/(heads|remotes)\//, "")}`;
   }
   // No ref means index → working tree, just like plain git diff.
-  const files = parseNumstat(await run(["diff", ...DIFF_OPTIONS, "--numstat", "-z", ...(ref ? [ref] : []), "--"]));
-  const known = new Set(files.map((file) => file.path));
+  const changes = new Map(parseNumstat(await run(["diff", ...DIFF_OPTIONS, "--numstat", "-z", ...(ref ? [ref] : []), "--"]))
+    .map((file) => [file.path, file]));
+  const unmerged = await run(["diff", ...DIFF_OPTIONS, "--name-only", "--diff-filter=U", "-z", "--"]);
+  for (const path of unmerged.split("\0").filter(Boolean)) {
+    changes.set(path, { path, added: 0, removed: 0, patch: "Unmerged conflict preview unsupported. Resolve the conflict with Git before previewing." });
+  }
+  const files = [...changes.values()];
+  const known = new Set(changes.keys());
   const untracked = (base ? await run(["ls-files", "--others", "--exclude-standard", "-z"]) : "").split("\0").filter(Boolean);
   for (const path of untracked) {
     signal?.throwIfAborted();
