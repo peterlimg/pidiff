@@ -1,5 +1,5 @@
 // Scripted sample session for the recording. Runs real Pi/pidiff, with no model calls.
-// From the repo root: vhs scripts/demo.tape
+// From the repo root: vhs scripts/demo.tape. Setup and update guide: scripts/README.md.
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

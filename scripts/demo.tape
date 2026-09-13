@@ -1,5 +1,5 @@
 # Recorded with VHS 0.11.0 and Pi 0.85.1. Requires ttyd, ffmpeg, and npm install.
-# Run from the repo root: vhs scripts/demo.tape
+# Run from the repo root: vhs scripts/demo.tape. Setup and update guide: scripts/README.md.
 Output assets/demo.gif
 Output assets/demo.mp4
 
