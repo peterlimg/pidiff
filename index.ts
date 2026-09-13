@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("diff", {
-    description: "Toggle unstaged diff. /diff <base-ref> for an explicit comparison; /diff view [base-ref] for the modal and recorded turns.",
+    description: "Toggle unstaged diff and recorded turns. /diff <base-ref> for an explicit comparison; /diff view [base-ref] for the modal.",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         if (ctx.hasUI) ctx.ui.notify("/diff requires Pi's terminal UI.", "warning");
@@ -104,6 +104,9 @@ export default function (pi: ExtensionAPI) {
       const argument = args.trim();
       const modal = /^view(?:\s|$)/.test(argument);
       const base = (modal ? argument.slice(4).trim() : argument) || undefined;
+      const getTurns = () => ctx.sessionManager.getBranch().flatMap((entry) =>
+        entry.type === "custom" && entry.customType === ENTRY ? [entry.data as View] : [],
+      ).reverse();
       if (!modal) {
         if (panel && !base) { closePanel(); return; }
         closePanel();
@@ -113,7 +116,7 @@ export default function (pi: ExtensionAPI) {
         // the editor, opening an overlay, or taking keyboard focus.
         ctx.ui.setWidget("pidiff-panel", (tui, theme) => {
           try {
-            panel = openPanel(tui, theme, ctx.cwd, base, closePanel);
+            panel = openPanel(tui, theme, ctx.cwd, base, closePanel, getTurns);
           } catch (cause) { error = cause; }
           return { render: () => [], invalidate() {} };
         });
@@ -144,11 +147,8 @@ export default function (pi: ExtensionAPI) {
         };
       });
       if (!current) return;
-      const turns = ctx.sessionManager.getBranch().flatMap((entry) =>
-        entry.type === "custom" && entry.customType === ENTRY ? [entry.data as View] : [],
-      ).reverse();
       await ctx.ui.custom<void>((tui, theme, kb, done) =>
-        new DiffViewer(tui, theme, kb, () => done(), [current, ...turns], load),
+        new DiffViewer(tui, theme, kb, () => done(), [current, ...getTurns()], load),
         { overlay: true, overlayOptions: { width: "95%", maxHeight: "90%", anchor: "center" } },
       );
     },

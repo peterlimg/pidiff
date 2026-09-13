@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, mock } from "node:test";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { HStack, ScrollView, Text, VStack, TuiAltScreen, type Terminal } from "@earendil-works/pi-tui";
 import { mountSplit } from "./split.ts";
 import { openPanel } from "./panel.ts";
-import { git } from "./git.ts";
+import { git, type View } from "./git.ts";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -161,12 +163,24 @@ test("many files never push the selected patch out of view", async () => {
     assert.equal(tui.getFocusedComponent(), prompt);
     // Keyboard navigation keeps the selected file visible in the short list.
     fileScroll.scrollToStart();
-    harness.input("\x1b[1;7C"); // Ctrl+Alt+Right
+    harness.input("\x1b[1;3B"); // Option+Down selects the next file.
+    harness.input("\x1b[1;3:3B"); // Key-up must not switch a second time.
     await panel.refresh();
     tui.renderNow();
     assert.match(frame().lines.join("\n"), new RegExp(`› ${String(index + 1).padStart(2, "0")}\\.txt`));
     assert.match(frame().lines.join("\n"), new RegExp(`code-${index + 1}-0`));
     assert.equal(tui.getFocusedComponent(), prompt);
+    harness.input("\x1b[1;3A");
+    await panel.refresh();
+    assert.match(frame().lines.join("\n"), new RegExp(`code-${index}-0`));
+    harness.input("\x1b[1;3B");
+    await panel.refresh();
+    // Plain arrows still reach the prompt, not the file switcher.
+    const promptKeys: string[] = [];
+    Object.assign(prompt, { handleInput: (data: string) => promptKeys.push(data) });
+    for (const key of ["\x1b[D", "\x1b[C"]) harness.input(key);
+    assert.deepEqual(promptKeys, ["\x1b[D", "\x1b[C"]);
+    assert.match(panel.component.children.at(-1)!.render(44).join("\n"), /Alt\+←→ Current\/turns · Alt\+↑↓ files/);
     for (const rows of [12, 60, 30]) {
       Object.assign(harness.terminal, { rows });
       tui.renderNow();
@@ -179,6 +193,118 @@ test("many files never push the selected patch out of view", async () => {
     tui.stop();
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+for (const [encoding, left, right, release] of [
+  ["CSI", "\x1b[1;3D", "\x1b[1;3C", "\x1b[1;3:3C"],
+  ["legacy", "\x1bb", "\x1bf", ""],
+  // Captured from Ghostty: Option+arrows arrive as Kitty Alt+B / Alt+F.
+  ["Ghostty Kitty", "\x1b[98;3:1u", "\x1b[102;3:1u", "\x1b[102;3:3u"],
+] as const) test(`panel browses Current and recorded turns with ${encoding} arrows`, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pidiff-turns-"));
+  const harness = terminalHarness();
+  const tui = new TuiAltScreen(harness.terminal);
+  const prompt = new Text("draft", 0, 0);
+  tui.setLayoutRoot(new VStack([prompt]));
+  tui.setFocus(prompt);
+  const theme = { fg: (_: string, text: string) => text, bg: (_: string, text: string) => text, bold: (text: string) => text } as Theme;
+  const recorded: View = { label: "Turn · recorded", files: [
+    { path: "same.txt", added: 1, removed: 0, patch: "@@ -0,0 +1 @@\n+RECORDED_A\n" },
+    { path: "z.txt", added: 1, removed: 0, patch: "@@ -0,0 +1 @@\n+RECORDED_Z\n" },
+  ] };
+  const turns: View[] = [recorded, { label: "Turn · empty", files: [], note: "Only the first 25 edited files were recorded." }];
+  let panel: ReturnType<typeof openPanel> | undefined;
+  const render = () => renderLayoutFrame(Reflect.get(tui, "layoutRoot"), 160, 30, () => {}).lines.join("\n");
+  try {
+    await git(cwd, ["init", "-b", "main"]);
+    await writeFile(join(cwd, "same.txt"), "LIVE_BEFORE\n");
+    await git(cwd, ["add", "-N", "--", "."]);
+    panel = openPanel(tui, theme, cwd, undefined, () => panel?.dispose(), () => turns);
+    await panel.refresh();
+    tui.start();
+    assert.match(render(), /LIVE_BEFORE/);
+    harness.input(right);
+    if (release) harness.input(release);
+    await panel.refresh();
+    assert.match(render(), /Turn · recorded \[2\/3\]/);
+    assert.match(render(), /RECORDED_A/);
+    assert.doesNotMatch(render(), /LIVE_BEFORE/);
+    harness.input("\x1b[1;3B");
+    await panel.refresh();
+    assert.match(render(), /RECORDED_Z/);
+    harness.input("\x1b[1;3A");
+    await panel.refresh();
+    assert.match(render(), /RECORDED_A/);
+    await writeFile(join(cwd, "same.txt"), "LIVE_AFTER\n");
+    turns.unshift({ label: "Turn · newest", files: [] });
+    await panel.refresh();
+    assert.match(render(), /Turn · recorded \[3\/4\]/);
+    assert.match(render(), /RECORDED_A/, "new turns and Git changes must not replace the selected snapshot");
+    harness.input(left);
+    await panel.refresh();
+    assert.match(render(), /Turn · newest \[2\/4\]/);
+    harness.input(left);
+    await panel.refresh();
+    assert.match(render(), /Current · unstaged \[1\/4\]/);
+    assert.match(render(), /LIVE_AFTER/);
+    harness.input(left); // Wrap to the oldest turn, as in /diff view.
+    await panel.refresh();
+    assert.match(render(), /Turn · empty \[4\/4\]/);
+    assert.match(render(), /Only the first 25/);
+    assert.doesNotMatch(render(), /LIVE_AFTER|RECORDED_A/);
+    harness.input(right);
+    await panel.refresh();
+    assert.match(render(), /LIVE_AFTER/);
+    const overlay = tui.showOverlay(new Text("modal"));
+    harness.input(right);
+    overlay.hide();
+    Object.assign(harness.terminal, { columns: 80 });
+    harness.input(right);
+    Object.assign(harness.terminal, { columns: 160 });
+    await panel.refresh();
+    assert.match(render(), /Current · unstaged \[1\/4\]/, "hidden panels and modal input must not switch turns");
+    assert.equal(tui.getFocusedComponent(), prompt);
+  } finally { panel?.dispose(); tui.stop(); await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("switching turns aborts live work without stale errors or cleanup replacing the new load", async () => {
+  const harness = terminalHarness();
+  const tui = new TuiAltScreen(harness.terminal);
+  tui.setLayoutRoot(new VStack([new Text("draft", 0, 0)]));
+  const theme = { fg: (_: string, text: string) => text, bg: (_: string, text: string) => text, bold: (text: string) => text } as Theme;
+  const turn: View = { label: "Turn · saved", files: [{ path: "file.txt", added: 1, removed: 0, patch: "@@ -0,0 +1 @@\n+SAVED\n" }] };
+  let signal: AbortSignal | undefined;
+  let finish: (error: Error, stdout: string, stderr: string) => void;
+  const exec = mock.method(childProcess, "execFile", ((_cmd: string, _args: string[], options: { signal?: AbortSignal }, callback: typeof finish) => {
+    signal = options.signal;
+    finish = callback;
+    return { stdin: { end() {} } };
+  }) as any);
+  syncBuiltinESMExports();
+  let panel: ReturnType<typeof openPanel> | undefined;
+  const render = () => renderLayoutFrame(Reflect.get(tui, "layoutRoot"), 160, 30, () => {}).lines.join("\n");
+  try {
+    panel = openPanel(tui, theme, tmpdir(), undefined, () => panel?.dispose(), () => [turn]);
+    const oldLoad = panel.refresh(), oldSignal = signal!, finishOld = finish!;
+    tui.start();
+    harness.input("\x1b[102;3:1u");
+    await panel.refresh();
+    assert.equal(oldSignal.aborted, true);
+    assert.match(render(), /SAVED/, "history must not wait for Git to finish");
+    harness.input("\x1b[98;3:1u");
+    const newLoad = panel.refresh(), newSignal = signal!, finishNew = finish!;
+    finishOld(new Error("STALE"), "", "");
+    await oldLoad;
+    assert.equal(panel.refresh(), newLoad, "old cleanup must not clear a newer pending load");
+    assert.doesNotMatch(render(), /STALE|SAVED/);
+    harness.input("\x1b[102;3:1u");
+    await panel.refresh();
+    assert.equal(newSignal.aborted, true);
+    finishNew(new Error("STALE"), "", "");
+    await newLoad;
+    assert.match(render(), /SAVED/);
+    assert.doesNotMatch(render(), /STALE|Refresh failed/);
+  } finally { panel?.dispose(); tui.stop(); exec.mock.restore(); syncBuiltinESMExports(); }
 });
 
 test("scrolling past code boundaries selects adjacent files without skipping, wrapping or scrolling chat", async () => {

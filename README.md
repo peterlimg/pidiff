@@ -8,7 +8,7 @@ A live diff viewer for [Pi](https://pi.dev). Keep your conversation and prompt o
 
 - Watch diffs update as Pi works or files change externally.
 - Resize the pane and browse files without leaving your prompt.
-- Review Pi's edits by turn in a separate viewer.
+- Review Pi's edits by turn in the pane or modal viewer.
 
 ## Install
 
@@ -36,13 +36,18 @@ By default, `/diff` works like `git diff`: staged-only and untracked files are e
 
 ### Split pane
 
-Click a filename to open its diff. Drag the divider to resize. Scroll over the file list or code independently; scrolling past a diff's end opens the next file. Click `×` or run `/diff` again to close.
+Use Alt/Option+Left / Right to switch between Current and recorded turns, in the same order as `/diff view`. Current refreshes live; recorded turns show saved edits. New turns appear without changing your selection.
+
+Click a filename or use Alt/Option+Up / Down to open its diff. Drag the divider to resize. Scroll over the file list or code independently; scrolling past a diff's end opens the next file. Click `×` or run `/diff` again to close.
 
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+Alt+Up / Down | Scroll code |
-| Ctrl+Alt+Left / Right | Switch files |
+| Alt+Left / Right | Switch between Current and recorded turns |
+| Alt+Up / Down | Select a file |
 | Ctrl+Alt+Shift+Left / Right | Resize the pane |
+
+Alt is Option on macOS. The pane uses modified arrows so plain arrows stay available in the prompt. While the pane is visible, its shortcuts take precedence over prompt word movement and other editor bindings.
 
 ### Modal viewer
 

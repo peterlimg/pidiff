@@ -1,11 +1,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { ScrollView, VStack, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { ScrollView, VStack, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { currentView, filePatch, safeText, type View } from "./git.ts";
 import { mountSplit } from "./split.ts";
 import { renderDiff } from "./diff.ts";
 
-export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | undefined, onClose: () => void) {
+export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | undefined, onClose: () => void, getTurns: () => View[] = () => []) {
   let view: View = { label: "Loading changes...", files: [] };
+  let turn: View | undefined;
   let selected: string | undefined;
   let patch = "";
   let error = "";
@@ -16,7 +17,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
   let cached: { width: number; lines: string[] } | undefined;
   let loading = true;
   let landing: "start" | "end" | undefined = "start";
-  const controller = new AbortController();
+  let controller = new AbortController();
 
   function invalidate() { cached = undefined; }
   function select(path: string, edge: "start" | "end" = "start") {
@@ -29,6 +30,27 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
     scroll.scrollToStart();
     revealSelection();
     tui.requestRender();
+    void refresh();
+  }
+
+  function switchTurn(direction: number) {
+    const views = [undefined, ...getTurns()];
+    const index = Math.max(0, views.indexOf(turn));
+    const next = views[(index + direction + views.length) % views.length];
+    if (next === turn) return;
+    turn = next;
+    controller.abort();
+    controller = new AbortController();
+    running = undefined;
+    again = false;
+    view = turn ?? { label: "Loading Current...", files: [] };
+    selected = undefined;
+    patch = error = "";
+    loading = true;
+    landing = "start";
+    scroll.scrollToStart();
+    fileScroll.scrollToStart();
+    invalidate();
     void refresh();
   }
 
@@ -97,7 +119,9 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       const added = view.files.reduce((sum, file) => sum + file.added, 0);
       const removed = view.files.reduce((sum, file) => sum + file.removed, 0);
       const title = truncateToWidth(theme.bold(`${view.files.length} ${view.files.length === 1 ? "file" : "files"} changed`) + theme.fg("toolDiffAdded", ` +${added}`) + theme.fg("toolDiffRemoved", ` -${removed}`), Math.max(1, width - 4));
-      return [title + " ".repeat(Math.max(0, width - visibleWidth(title) - 3)) + " × ", truncateToWidth(theme.fg("dim", safeText(view.label)), width)];
+      const turns = getTurns();
+      const tab = turn ? turns.indexOf(turn) + 1 : 0;
+      return [title + " ".repeat(Math.max(0, width - visibleWidth(title) - 3)) + " × ", truncateToWidth(theme.fg("dim", `${safeText(view.label)} [${tab + 1}/${turns.length + 1}]`), width)];
     },
     handleMouse(event) {
       if (event.y === 0 && event.x >= event.width - 3 && event.button === "left") {
@@ -111,7 +135,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
     { component: fileScroll, maxSize: 6 },
     { component: { render: (width) => [truncateToWidth(theme.bold(safeText(selected ?? "")), width)], invalidate }, basis: 1, shrink: 0 },
     { component: scroll, basis: 6, grow: 1, minSize: 1 },
-    { component: { render: (width) => ["Drag │ to resize · /diff close", "Ctrl+Alt+↑↓ code · ←→ file"].map((line) => truncateToWidth(theme.fg("dim", line), width)), invalidate() {} }, basis: 2, shrink: 0 },
+    { component: { render: (width) => ["Drag │ resize · Ctrl+Alt+↑↓ code · /diff", "Alt+←→ Current/turns · Alt+↑↓ files"].map((line) => truncateToWidth(theme.fg("dim", line), width)), invalidate() {} }, basis: 2, shrink: 0 },
   ]);
   // Pi 0.85's wheel fallback can scroll the primary chat even after a
   // contained ScrollView hits its boundary. Own wheel input for the entire
@@ -127,30 +151,34 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
   const unmount = mountSplit(tui, component);
   const mountedRoot = Reflect.get(tui, "layoutRoot");
   const removeInput = tui.addInputListener((data) => {
-    if (closed || tui.terminal.columns < 110 || tui.hasOverlay()) return;
+    if (closed || tui.terminal.columns < 110 || tui.hasOverlay() || isKeyRelease(data)) return;
+    // Ghostty can encode Option+arrows as Kitty Alt+B / Alt+F.
+    const previous = matchesKey(data, "alt+left") || matchesKey(data, "alt+b");
+    const next = matchesKey(data, "alt+right") || matchesKey(data, "alt+f");
     if (matchesKey(data, "ctrl+alt+up")) scrollCode(-3);
     else if (matchesKey(data, "ctrl+alt+down")) scrollCode(3);
-    else if (matchesKey(data, "ctrl+alt+left") || matchesKey(data, "ctrl+alt+right")) {
-      const direction = matchesKey(data, "ctrl+alt+left") ? -1 : 1;
+    else if (previous || next) switchTurn(previous ? -1 : 1);
+    else if (matchesKey(data, "alt+up") || matchesKey(data, "alt+down")) {
+      const direction = matchesKey(data, "alt+up") ? -1 : 1;
       const index = view.files.findIndex((file) => file.path === selected);
-      const file = view.files[(index + direction + view.files.length) % view.files.length];
+      const file = view.files[Math.max(0, Math.min(view.files.length - 1, index + direction))];
       if (file) select(file.path);
     } else return;
     tui.requestRender();
     return { consume: true };
   });
 
-  async function update() {
+  async function update(signal: AbortSignal) {
     try {
-      const next = await currentView(cwd, base, controller.signal);
-      if (closed) return;
+      const next = turn ?? await currentView(cwd, base, signal);
+      if (closed || signal.aborted) return;
       const file = next.files.find((file) => file.path === selected) ?? next.files[0];
       const path = file?.path;
       const changed = selected !== path;
       if (changed) { loading = true; landing = "start"; patch = ""; invalidate(); }
       selected = path;
-      const fullPatch = file ? await filePatch(next, file, controller.signal) : "";
-      if (closed) return;
+      const fullPatch = file ? await filePatch(next, file, signal) : "";
+      if (closed || signal.aborted) return;
       if (selected !== path) { again = true; return; }
       view = next;
       if (changed) { scroll.scrollToStart(); revealSelection(); }
@@ -158,7 +186,7 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       error = "";
       loading = false;
     } catch (cause) {
-      if (closed) return;
+      if (closed || signal.aborted) return;
       error = `Refresh failed: ${(cause as Error).message}`;
     }
     invalidate();
@@ -173,7 +201,9 @@ export function openPanel(tui: TUI, theme: Theme, cwd: string, base: string | un
       return Promise.resolve();
     }
     if (running) { again = true; return running; }
-    running = update().finally(() => {
+    const signal = controller.signal;
+    running = update(signal).finally(() => {
+      if (signal.aborted) return;
       running = undefined;
       if (!closed) timer = setTimeout(() => void refresh(), again ? 100 : 2000);
       again = false;
