@@ -1,10 +1,10 @@
-# pidiff
+# pi-diff
 
 A live diff viewer for [Pi](https://pi.dev). Keep your conversation and prompt on the left, with changed files and syntax-colored diffs on the right.
 
-![pidiff showing live diffs, pane resizing, file switching, and the modal viewer](assets/demo.gif)
+![pi-diff showing live diffs, pane resizing, file switching, and the modal viewer](https://raw.githubusercontent.com/peterlimg/pi-diff/main/assets/demo.gif)
 
-[Watch the 29-second demo](assets/demo.mp4). Recorded in Pi with a scripted sample project.
+[Watch the 29-second demo](https://github.com/peterlimg/pi-diff/blob/main/assets/demo.mp4). Recorded in Pi with a scripted sample project.
 
 - Watch diffs update as Pi works or files change externally.
 - Resize the pane and browse files without leaving your prompt.
@@ -13,7 +13,7 @@ A live diff viewer for [Pi](https://pi.dev). Keep your conversation and prompt o
 ## Install
 
 ```sh
-pi install git:github.com/peterlimg/pidiff
+pi install git:github.com/peterlimg/pi-diff
 ```
 
 Run `/reload`, then set **TUI mode** to **fullscreen** in `/settings`. Open a Git repository and run `/diff`.
@@ -60,7 +60,11 @@ Alt is Option on macOS. The pane uses modified arrows so plain arrows stay avail
 | r | Refresh Current |
 | Esc, Ctrl+C, q | Go back, then close |
 
-Turn history covers Pi's `edit` and `write` calls while pidiff is loaded. Shell and external edits appear in Current, not as recorded turns.
+Turn history covers Pi's `edit` and `write` calls while pi-diff is loaded. Shell and external edits appear in Current, not as recorded turns.
+
+### Privacy
+
+Turn history saves prompt excerpts and file diffs in your local Pi session, even when the diff pane is closed. Secrets in edited files are not redacted. Review session exports and keep backups private if they contain sensitive content.
 
 ## License
 
